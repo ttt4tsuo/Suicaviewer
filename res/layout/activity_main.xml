@@ -8,17 +8,14 @@
     android:paddingTop="@dimen/activity_vertical_margin"
     tools:context="jp.kanagawa.kawasaki.suicaviewer.MainActivity" >
 
-    <TextView
-        	android:id="@+id/textview"
-        	android:layout_width="wrap_content"
-        	android:layout_height="wrap_content"
-        	android:layout_alignParentTop="true"
-        	android:text="@string/hello_world" />
-	<TextView
-    	    android:id="@+id/textview2"
-    	    android:layout_width="wrap_content"
-    		android:layout_height="wrap_content"
-        	android:layout_below="@+id/textview"
-			android:text="@string/hello_world" />
+	<ListView
+        android:id="@+id/nfc_record_listview"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentTop="true"
+        android:ems="10"
+        android:gravity="center" >
+
+    </ListView>
 
 </RelativeLayout>

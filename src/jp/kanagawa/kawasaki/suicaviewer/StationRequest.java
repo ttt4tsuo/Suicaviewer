@@ -27,10 +27,8 @@ public class StationRequest<T> extends Request<T> {
 	@Override
     protected Response<T> parseNetworkResponse(NetworkResponse response) {
         try {
-            String json = new String(
-                    response.data,
-                    "utf-8");
-            Log.d("myAppp",json);
+            String json = new String(response.data,"utf-8");
+            Log.d("myapp",json);
             return (Response<T>) Response.success(
             		json,
                     HttpHeaderParser.parseCacheHeaders(response));

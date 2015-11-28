@@ -7,7 +7,7 @@ package jp.kanagawa.kawasaki.suicaviewer;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.util.concurrent.CountDownLatch;
+import java.util.ArrayList;
 
 import com.android.volley.RequestQueue;
 import com.android.volley.Response;
@@ -22,16 +22,25 @@ import android.nfc.Tag;
 import android.nfc.tech.NfcF;
 import android.os.Bundle;
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.BaseAdapter;
+import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
 
 
 public class MainActivity extends Activity {
 	private RequestQueue mQueue;
-	private String recdata;
-	private StationCodedata stCodedata;
+	private String recdata4in;
+	private String recdata4out;
+	volatile private StationCodedata stCodedata4in;
+	volatile private StationCodedata stCodedata4out;
+	volatile private ArrayList<Blockdata> block;
 	
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -51,17 +60,19 @@ public class MainActivity extends Activity {
     		nfc_f.connect();
     		byte[] req = readWithoutEncryption(felicaIDm, 10);
     		byte[] res = nfc_f.transceive(req);
-    		TextView textView = (TextView)findViewById(R.id.textview);
-            textView.setText(parse(res));
+    		parse(res);
+    		nfc_f.close();
             //ネットワークステータス処理
             ConnectivityManager connmanager = (ConnectivityManager)this.getSystemService(CONNECTIVITY_SERVICE);
             NetworkInfo info = connmanager.getActiveNetworkInfo();
             if (info == null || info.isConnected() != true) {
             	Toast.makeText(this, "Network Not Connected!", Toast.LENGTH_LONG).show();
             }else{
-            	searchStationCode();
+            	//for(int i=0;i<block.size();i++){
+            	for(int i=0;i<2;i++){
+            		searchStationCode(i);
+            	}
             }
-    		nfc_f.close();
     	}catch(Exception e){
 
     	}
@@ -88,7 +99,7 @@ public class MainActivity extends Activity {
         msg[0] = (byte) msg.length; // 先頭１バイトはデータ長
         return msg;
     }
-    private String parse(byte[] res) throws Exception {
+    private void parse(byte[] res) throws Exception {
     	//////////////////////////////////////////////////////////////
         // 0バイト目    = データ長(データリンク層)
         // 1バイト目    = レスポンスコード(0x07)
@@ -100,65 +111,163 @@ public class MainActivity extends Activity {
     	//////////////////////////////////////////////////////////////
     	
         if (res[10] != 0x00 || res[11] != 0x00){
-        	return "Read Status Error";
+        	return;
         };
         int size = res[12];
-        String str = "";
+        
+        NfcRecordAdapter nfcRecordAdpter = new NfcRecordAdapter();
+        block = new ArrayList<Blockdata>();
+
         for (int i = 0; i < size; i++) {
-        	Blockdata block = Blockdata.parse(res, 13 + i * 16);
-            str += block.toString() +"\n";
+        	block.add(Blockdata.parse(res, 13 + i * 16));
         }
-        return str;
+        ListView listView1 = (ListView)findViewById(R.id.nfc_record_listview);
+        listView1.setAdapter(nfcRecordAdpter);
+
     }
     
-    private void searchStationCode(){
-    	final CountDownLatch latch = new CountDownLatch(1);
-    	
-    	new Thread(new Runnable() {
-            public void run() {
-                try{
-                	String accessurl = "http://mysterious-reaches-6275.herokuapp.com/services/timez/db?linecode=1&stationcode=6";
-                	mQueue.add(new StationRequest<String>(accessurl,
-                			new Response.Listener<String>() {
-                				@Override
-                				public void onResponse(String response) {
-                					Log.d("myAppp","ok"); 
-                					recdata=response;
-                					latch.countDown();
-                				}
-                			},
-                			new Response.ErrorListener() {
-                				@Override
-                				public void onErrorResponse(VolleyError error) {
-                					Log.d("myAppp","volley error");
-                					Log.d("myAppp",error.networkResponse.toString());
-                					latch.countDown();
-                				}
-                			}));
-                }catch (Exception e){
-                	Log.d("myAppp","thread error");
-                }
-            }
-    	}).start();
-    	
-    	new Thread(new Runnable(){
-            public void run() {
-                try{
-                	latch.await();
-                	Gson gson = new Gson();
-                	StationCodedata stationcodedata = gson.fromJson(recdata, StationCodedata.class);
-                	stCodedata=stationcodedata;
-                }catch (Exception e){
-                	Log.d("myAppp gson",e.toString());
-                }
-                runOnUiThread(new Runnable() {
-                    public void run() {
-                    	TextView textView = (TextView) findViewById(R.id.textview2);
-                    	textView.setText(stCodedata.getLineName());
-                    }
-            	});
-            }
-    	}).start();
+    private void searchStationCode(final int listnum){
+    	try{
+    		if(block.get(listnum).getResolvedInLine()!=null || block.get(listnum).getResolvedInStation()!=null){
+        		return;
+        	}
+        	String accessurl = "http://mysterious-reaches-6275.herokuapp.com/services/timez/db?"
+                						+"linecode="+block.get(listnum).getInLine()
+                						+"&stationcode="+block.get(listnum).getInStation();
+        	mQueue.add(new StationRequest<String>(accessurl, new Response.Listener<String>() {
+            	@Override
+            	public void onResponse(String response) {
+            		recdata4in=response;
+            		Gson gson = new Gson();
+            		stCodedata4in = gson.fromJson(recdata4in, StationCodedata.class);
+            		block.get(listnum).setResolvedInLine(stCodedata4in.getLineName());
+            		block.get(listnum).setResolvedInStation(stCodedata4in.getStationName());
+            		
+            		//inStationとoutStationのキューが同時に動くので必要
+            		ListView listView1 = (ListView)findViewById(R.id.nfc_record_listview);
+            		View targetView = listView1.getChildAt(listnum);
+            		listView1.getAdapter().getView(listnum, targetView, listView1);
+            	}
+            },
+            new Response.ErrorListener() {
+            	@Override
+            	public void onErrorResponse(VolleyError error) {
+            		Log.d("myapp","volley error StationIn:"+error.getMessage());
+            		Log.d("myapp","listnum;"+Integer.toString(listnum));
+            	}
+            }));
+            
+        	if(block.get(listnum).getResolvedOutLine()!=null || block.get(listnum).getResolvedOutStation()!=null){
+        		return;
+        	}
+            accessurl = "http://mysterious-reaches-6275.herokuapp.com/services/timez/db?"
+    						+"linecode="+block.get(listnum).getOutLine()
+    						+"&stationcode="+block.get(listnum).getOutStation();
+            mQueue.add(new StationRequest<String>(accessurl, new Response.Listener<String>() {
+            	@Override
+            	public void onResponse(String response) {
+            		recdata4out=response;
+            		Gson gson = new Gson();
+            		stCodedata4out = gson.fromJson(recdata4out, StationCodedata.class);
+            		block.get(listnum).setResolvedOutLine(stCodedata4out.getLineName());
+            		block.get(listnum).setResolvedOutStation(stCodedata4out.getStationName());
+
+            		ListView listView1 = (ListView)findViewById(R.id.nfc_record_listview);
+            		View targetView = listView1.getChildAt(listnum);
+            		listView1.getAdapter().getView(listnum, targetView, listView1);
+            	}
+            },
+            new Response.ErrorListener() {
+            	@Override
+            	public void onErrorResponse(VolleyError error) {
+            		Log.d("myapp","volley error StationOut"+error.getMessage());
+            	}
+            }));
+            mQueue.start();
+            
+    	}catch (Exception e){
+    		Log.d("myapp","thread error");
+        }
+                
+    }
+    
+    private class NfcRecordAdapter extends BaseAdapter {
+    	@Override
+        public int getCount() {
+        	return block.size();
+        }
+
+        @Override
+        public Object getItem(int position) {
+        	return block.get(position);
+        }
+
+        @Override
+        public long getItemId(int position) {
+        	return position;
+        }
+
+        @Override
+        public View getView(int position,View convertView,ViewGroup parent) {
+        	TextView mTextView_seq_num;
+        	TextView mTextView_day;
+        	TextView mTextView_remain;
+        	
+        	TextView mTextView_devname;
+        	TextView mTextView_actname;
+        	//TextView mTextView_cost;
+        	
+        	TextView mTextView_inline;
+        	TextView mTextView_instation;
+        	TextView mTextView_outline;
+        	TextView mTextView_outstation;
+        	
+        	View v = convertView;
+        	if(v==null){
+        		LayoutInflater inflater =  (LayoutInflater)getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+        		v = inflater.inflate(R.layout.nfc_record, (ViewGroup)null);
+        	}
+        	Blockdata block = (Blockdata)getItem(position);
+        	if(block != null){
+        		mTextView_seq_num = (TextView) v.findViewById(R.id.seq_num);
+        		mTextView_day = (TextView) v.findViewById(R.id.day);
+        		mTextView_remain = (TextView) v.findViewById(R.id.remain);
+        		mTextView_devname = (TextView) v.findViewById(R.id.devname);
+        		mTextView_actname = (TextView) v.findViewById(R.id.actname);
+        		mTextView_inline = (TextView) v.findViewById(R.id.inline);
+        		mTextView_instation = (TextView) v.findViewById(R.id.instation);
+        		mTextView_outline = (TextView) v.findViewById(R.id.outline);
+        		mTextView_outstation = (TextView) v.findViewById(R.id.outstation);
+        		
+        		mTextView_seq_num.setText(block.getSequenceNum());
+        		mTextView_day.setText(block.getDay());
+        		mTextView_remain.setText("残高:"+block.getRemain()+"円");
+        		mTextView_devname.setText(block.getDevName());
+        		mTextView_actname.setText(block.getActName());
+        		if(block.getResolvedInLine()!=null){
+        			mTextView_inline.setText(block.getResolvedInLine());
+        		}else{
+        			mTextView_inline.setText(block.getInLine());
+        		}
+        		if(block.getResolvedInStation()!=null){
+        			mTextView_instation.setText(block.getResolvedInStation());
+        		}else{
+        			mTextView_instation.setText(block.getInStation());
+        		}
+        		if(block.getResolvedOutLine()!=null){
+        			mTextView_outline.setText(block.getResolvedOutLine());
+        		}else{
+        			mTextView_outline.setText(block.getOutLine());
+        		}
+        		if(block.getResolvedOutStation()!=null){
+        			mTextView_outstation.setText(block.getResolvedOutStation());
+        		}else{
+        			mTextView_outstation.setText(block.getOutStation());
+        		}
+        	}
+        	return v;
+        }
+        
     }
 }
 
